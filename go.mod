@@ -1,6 +1,6 @@
 module github.com/josith/tt-fn
 
-go 1.18
+go 1.21.3
 
 require (
 	github.com/aws/aws-sdk-go v1.45.27 // indirect
