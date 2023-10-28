@@ -13,11 +13,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/polly"
 	openai "github.com/sashabaranov/go-openai"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	AUDIO_FILE_NAME = "voiceover_a"
-	TEST_VO_STRING  = "Yeah this is just a test to verify that the file writing works. Thanks."
+	MAIN_AUDIO_FILE_NAME = "voiceover_a"
+	END_AUDIO_FILE_NAME  = "voiceover_b"
+	TEST_VO_STRING       = "Yeah this is just a test to verify that the file writing works. Thanks."
 )
 
 type AuthenticationData struct {
@@ -31,14 +33,21 @@ type FakeFactResponse struct {
 	SignOff string `json:"SignOff"`
 }
 
+type ImagePrompt struct {
+	Prompt string `json:"imagePrompt"`
+}
+
 // VideoMeta holds various data necessary to create our video.
+// "Script" and "SignOff" separated so we can better control the transitions between 'main' video segment and ending.
 type VideoMeta struct {
-	AwsSession     *session.Session
-	Credentials    *AuthenticationData
-	Images         *[]os.File
-	Script         string
-	SignOff        string
-	VOFileLocation string
+	AwsSession            *session.Session
+	Credentials           *AuthenticationData
+	Frames                *[]os.File
+	SignOffFrame          *os.File
+	Script                string
+	SignOff               string
+	ScriptVoFileLocation  string
+	SignOffVoFileLocation string
 }
 
 func main() {
@@ -47,7 +56,7 @@ func main() {
 		log.Fatalf("%v\n", err)
 	}
 
-	// Get prompt from file, generate out video script
+	// Get prompt from file, generate our video script and 'signoff' message
 	if err := videoMeta.getVideoScript(); err != nil {
 		log.Fatalf("%v\n", err)
 	}
@@ -57,38 +66,63 @@ func main() {
 		log.Fatalf("%v\n", err)
 	}
 
-	//Generate our voice over mp3 from AWS Polly
-	if err := videoMeta.generateVoiceOver(); err != nil {
+	if err := videoMeta.CreateVoiceOvers(); err != nil {
 		log.Fatalf("%v\n", err)
 	}
 
-	// url, err := GenerateFrames(videoMeta.Credentials.openAiToken, "")
-	// if err != nil {
-	// 	log.Fatalf("%v\n", err)
-	// }
+	imagePrompt, err := videoMeta.getImageGenPrompt()
+	if err != nil {
+		log.Fatalf("%v\n", err)
+	}
 
-	// fmt.Printf("image url: %v\n", url)
+	images, err := generateFrames(videoMeta.Credentials.openAiToken, imagePrompt)
+	if err != nil {
+		log.Fatalf("%v\n", err)
+	}
+
+	//TODO: Do something with the images
+	for _, image := range images {
+		fmt.Printf("image url: %v\n", image.Data[0].URL)
+	}
+
 	log.Printf("finished operation")
 }
 
-func generateFrames(apiToken, prompt string) (string, error) {
+func generateFrames(apiToken string, prompts []ImagePrompt) ([]openai.ImageResponse, error) {
 	ctx := context.Background()
 	client := openai.NewClient(apiToken)
+	g, ctx := errgroup.WithContext(ctx)
 
-	resp, err := client.CreateImage(ctx, openai.ImageRequest{
-		Prompt:         "Design a plausible image reflecting a historical setting in 1927 when Sir Frederick Marmalade conducted an experiment. Depict cats reading and writing poetry in a realistic laboratory environment. Portray the cats in a way that suggests their secret literary abilities, without losing the sense of reality",
-		N:              1,
-		Size:           openai.CreateImageSize512x512,
-		ResponseFormat: openai.CreateImageResponseFormatURL,
-		User:           "",
-	})
+	//Let's just make sure we only do max four loops. 2 cents a piece for these images!
+	var responses = make([]openai.ImageResponse, (len(prompts) - 1))
 
-	if err != nil {
-		return "", fmt.Errorf("API ImageRequest error: %v\n", err)
+	for i, prompt := range prompts {
+		if i < 3 {
+			//For the bug
+			i := i
+			prompt := prompt
+			g.Go(func() error {
+				resp, err := client.CreateImage(ctx, openai.ImageRequest{
+					Prompt:         prompt.Prompt,
+					N:              1,
+					Size:           openai.CreateImageSize512x512,
+					ResponseFormat: openai.CreateImageResponseFormatURL,
+					User:           "tt-fn",
+				})
+				if err != nil {
+					return err
+				}
+				responses[i] = resp
+				return nil
+			})
+		}
 	}
 
-	url := resp.Data[0].URL
-	return url, nil
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("API ImageRequest error: %v", err)
+	}
+
+	return responses, nil
 }
 
 func GetScript(apiToken, prompt string) (string, error) {
@@ -97,7 +131,7 @@ func GetScript(apiToken, prompt string) (string, error) {
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: openai.GPT3Dot5Turbo,
+			Model: openai.GPT4,
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleUser,
@@ -108,7 +142,7 @@ func GetScript(apiToken, prompt string) (string, error) {
 	)
 
 	if err != nil {
-		return "", fmt.Errorf("ChatCompletion error: %v\n", err)
+		return "", fmt.Errorf("ChatCompletion error: %v", err)
 	}
 
 	return resp.Choices[0].Message.Content, nil
@@ -121,7 +155,7 @@ func getCredentials() (*AuthenticationData, error) {
 
 	switch {
 	case token == "":
-		return nil, fmt.Errorf("Open AI Token not retrieved from ENV")
+		return nil, fmt.Errorf("access token for Open AI not retrieved from ENV")
 	case awsAccessKey == "":
 		return nil, fmt.Errorf("AWS access key not retrieved from ENV")
 	case awsAccessID == "":
@@ -147,18 +181,33 @@ func newMetaData() (*VideoMeta, error) {
 	return vmd, nil
 }
 
+// Send request to generate voice over mp3s for our script and signoff.
+func (vm *VideoMeta) CreateVoiceOvers() error {
+	//Generate our voice over mp3s from AWS Polly
+	vm.ScriptVoFileLocation = fmt.Sprintf("%s.%s", MAIN_AUDIO_FILE_NAME, "mp3")
+	vm.SignOffVoFileLocation = fmt.Sprintf("%s.%s", END_AUDIO_FILE_NAME, "mp3")
+
+	if err := vm.generateVoiceOver(vm.Script, vm.ScriptVoFileLocation); err != nil {
+		return fmt.Errorf("error when generating script vo: %v", err)
+	}
+
+	if err := vm.generateVoiceOver(vm.SignOff, vm.SignOffVoFileLocation); err != nil {
+		return fmt.Errorf("error when generating signoff vo: %v", err)
+	}
+
+	return nil
+}
+
 // Request a generated voice over for each scene
-func (vm *VideoMeta) generateVoiceOver() error {
+func (vm *VideoMeta) generateVoiceOver(script, filepath string) error {
 	// Create Polly client
 	svc := polly.New(vm.AwsSession)
-
-	vm.VOFileLocation = fmt.Sprintf("%s.%s", AUDIO_FILE_NAME, "mp3")
 
 	// Output to MP3 using voice Gregory
 	input := &polly.SynthesizeSpeechInput{
 		Engine:       aws.String("neural"),
 		OutputFormat: aws.String("mp3"),
-		Text:         &vm.Script,
+		Text:         aws.String(script),
 		VoiceId:      aws.String("Gregory"),
 	}
 
@@ -167,20 +216,43 @@ func (vm *VideoMeta) generateVoiceOver() error {
 		return fmt.Errorf("error calling SynthesizeSpeech: %v", err)
 	}
 
-	outFile, err := os.Create(vm.VOFileLocation)
+	outFile, err := os.Create(filepath)
 	if err != nil {
-		return fmt.Errorf("error creating %s: %v\n", vm.VOFileLocation, err)
+		return fmt.Errorf("error creating %s: %v", filepath, err)
 	}
-
-	vm.VOFileLocation = outFile.Name()
 
 	defer outFile.Close()
 	_, err = io.Copy(outFile, output.AudioStream)
 	if err != nil {
-		return fmt.Errorf("error saving MP3: %v\n", err)
+		return fmt.Errorf("error saving MP3: %v", err)
 	}
 
 	return nil
+}
+
+func (vm *VideoMeta) getImageGenPrompt() ([]ImagePrompt, error) {
+	prompt, err := os.ReadFile("prompt_prompt.txt")
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf(string(prompt), vm.Script)
+
+	resp, err := GetScript(vm.Credentials.openAiToken, fmt.Sprintf(string(prompt), vm.Script))
+	if err != nil {
+		return nil, err
+	}
+
+	var promptResp []ImagePrompt
+
+	if err := json.Unmarshal([]byte(resp), &promptResp); err != nil {
+		return nil, err
+	}
+
+	if len(promptResp) == 0 {
+		return nil, fmt.Errorf("no image prompts generated")
+	}
+
+	return promptResp, nil
 }
 
 // getVideoScript fetches a prompt from a file (prompt.txt within root directory),
@@ -197,7 +269,7 @@ func (vm *VideoMeta) getVideoScript() error {
 		return err
 	}
 
-	vidScript := new(FakeFactResponse)
+	vidScript := &FakeFactResponse{}
 
 	if err := json.Unmarshal([]byte(resp), vidScript); err != nil {
 		return err
