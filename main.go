@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 const (
 	MAIN_AUDIO_FILE_NAME = "voiceover_a"
 	END_AUDIO_FILE_NAME  = "voiceover_b"
+	IMAGE_FILE_PREFIX    = "vid_frame"
 	TEST_VO_STRING       = "Yeah this is just a test to verify that the file writing works. Thanks."
 )
 
@@ -42,8 +44,8 @@ type ImagePrompt struct {
 type VideoMeta struct {
 	AwsSession            *session.Session
 	Credentials           *AuthenticationData
-	Frames                *[]os.File
 	SignOffFrame          *os.File
+	FrameGlob             string
 	Script                string
 	SignOff               string
 	ScriptVoFileLocation  string
@@ -80,10 +82,14 @@ func main() {
 		log.Fatalf("%v\n", err)
 	}
 
-	//TODO: Do something with the images
-	for _, image := range images {
-		fmt.Printf("image url: %v\n", image.Data[0].URL)
+	if err := saveFrames(images); err != nil {
+		log.Fatalf("%v\n", err)
 	}
+
+	// //TODO: Do something with the images
+	// for _, image := range images {
+	// 	fmt.Printf("image url: %v\n", image.Data[0].URL)
+	// }
 
 	log.Printf("finished operation")
 }
@@ -106,7 +112,7 @@ func generateFrames(apiToken string, prompts []ImagePrompt) ([]openai.ImageRespo
 					Prompt:         prompt.Prompt,
 					N:              1,
 					Size:           openai.CreateImageSize512x512,
-					ResponseFormat: openai.CreateImageResponseFormatURL,
+					ResponseFormat: openai.CreateImageResponseFormatB64JSON,
 					User:           "tt-fn",
 				})
 				if err != nil {
@@ -123,6 +129,35 @@ func generateFrames(apiToken string, prompts []ImagePrompt) ([]openai.ImageRespo
 	}
 
 	return responses, nil
+}
+
+func saveFrames(imageData []openai.ImageResponse) error {
+	//Set the image glob
+	for i, img := range imageData {
+		filePth := fmt.Sprintf("%s_%b.png", IMAGE_FILE_PREFIX, i)
+
+		dec, err := base64.StdEncoding.DecodeString(img.Data[0].B64JSON)
+		if err != nil {
+			return err
+		}
+
+		f, err := os.Create(filePth)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		di, err := f.Write(dec)
+		if err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			return err
+		}
+
+		fmt.Printf("Image Data written: %v\n", di)
+	}
+	return nil
 }
 
 func GetScript(apiToken, prompt string) (string, error) {
