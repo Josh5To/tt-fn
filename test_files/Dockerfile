@@ -1,3 +1,4 @@
+#For testing the 'ffmpeg' portions of this process, so we don't have to worry about racking up API fees
 FROM centos:7
 COPY --from=golang:1.21 /usr/local/go /usr/local/go
 
@@ -16,9 +17,9 @@ RUN tar xvf ffmpeg.tar.xz
 RUN cp ffmpeg-git*/ffmpeg /usr/local/bin
 
 # Move to our project folder and run the program
-ADD . /tt-fn/
-WORKDIR /tt-fn
-RUN go run .
+ADD . /test_files
+ADD ../createvid.sh /test_files
+WORKDIR /test_files
 
 # After completion, get our variables needed for the ffmpeg command
 # RUN 'ffmpeg -r 0.\$((\$(ffmpeg -i voiceover_a.mp3 2>&1 | grep Duration | awk \'{print \$2}\' | cut -d ":" -f 3 | cut -d "." -f 1)/\$(ls | grep vid_frame_ | wc -l))) -start_number_range \$((\$(ls | grep vid_frame_ | wc -l)-1)) -i vid_frame_%d.png -i voiceover_a.mp3 -c:v libx264 -vf "format=yuv420p, crop=ih*(9/16):ih" -crf 21 -c:a copy output.mp4'
