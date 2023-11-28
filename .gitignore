@@ -5,3 +5,6 @@ vid_frame*
 voiceover_a.mp3
 voiceover_b.mp3
 *copy*.txt
+
+#Directories
+/vid-outputs

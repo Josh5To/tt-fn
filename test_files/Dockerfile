@@ -17,8 +17,8 @@ RUN tar xvf ffmpeg.tar.xz
 RUN cp ffmpeg-git*/ffmpeg /usr/local/bin
 
 # Move to our project folder and run the program
-ADD . /test_files
-ADD ../createvid.sh /test_files
+ADD ./test_files /test_files
+ADD ./createvid.sh /test_files
 WORKDIR /test_files
 
 # After completion, get our variables needed for the ffmpeg command
