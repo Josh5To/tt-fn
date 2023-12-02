@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,6 @@ const (
 	MAIN_AUDIO_FILE_NAME = "voiceover_a"
 	END_AUDIO_FILE_NAME  = "voiceover_b"
 	IMAGE_FILE_PREFIX    = "vid_frame"
-	TEST_VO_STRING       = "Yeah this is just a test to verify that the file writing works. Thanks."
 )
 
 type AuthenticationData struct {
@@ -23,7 +23,7 @@ type AuthenticationData struct {
 	awsAccessKey string
 }
 
-type FakeFactResponse struct {
+type VideoScript struct {
 	Fact    string `json:"FakeFact"`
 	SignOff string `json:"SignOff"`
 }
@@ -32,7 +32,17 @@ type ImagePrompt struct {
 	Prompt string `json:"imagePrompt"`
 }
 
+// chatGPT prompt used to generate the json payload for our video. Containing main script and a signoff.
+var scriptPromptFlag *string
+
+func init() {
+	scriptPromptFlag = flag.String("prompt", "",
+		"Use this to pass in a prompt tasking chatGPT with writing a narration script for a video. (Story, Documentary, etc.)")
+}
+
 func main() {
+	flag.Parse()
+
 	videoMeta, err := newMetaData()
 	if err != nil {
 		log.Fatalf("%v\n", err)
@@ -40,7 +50,7 @@ func main() {
 
 	// Get prompt from file, generate our video script and 'signoff' message
 	updateConsole("Getting video script...")
-	if err := videoMeta.getVideoScript(); err != nil {
+	if err := videoMeta.getVideoScript(*scriptPromptFlag); err != nil {
 		log.Fatalf("Error getting video script: %v\n", err)
 	}
 

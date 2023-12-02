@@ -88,6 +88,12 @@ func (vm *VideoMeta) generateVoiceOver(script, filepath string) error {
 }
 
 func (vm *VideoMeta) getImageGenPrompt() ([]ImagePrompt, error) {
+	/*
+		"prompt_prompt.txt" is a chatGPT prompt used to generate the chatGPT prompt for the
+		images describing the created video script.
+		The prompt being passed in here uses text formatting ("%s") within it,
+		which gets populated here using 'fmt.Sprintf'.
+	*/
 	prompt, err := os.ReadFile("prompt_prompt.txt")
 	if err != nil {
 		return nil, err
@@ -115,18 +121,13 @@ func (vm *VideoMeta) getImageGenPrompt() ([]ImagePrompt, error) {
 // getVideoScript fetches a prompt from a file (prompt.txt within root directory),
 // then sends request to OpenAI Chat completion to recieve a "script" for the video.
 // This script is saved to (VideoMeta).Script
-func (vm *VideoMeta) getVideoScript() error {
-	prompt, err := os.ReadFile("prompt.txt")
+func (vm *VideoMeta) getVideoScript(prompt string) error {
+	resp, err := GetScript(vm.Credentials.openAiToken, prompt)
 	if err != nil {
 		return err
 	}
 
-	resp, err := GetScript(vm.Credentials.openAiToken, string(prompt))
-	if err != nil {
-		return err
-	}
-
-	vidScript := &FakeFactResponse{}
+	vidScript := &VideoScript{}
 	if err := json.Unmarshal([]byte(resp), vidScript); err != nil {
 		return err
 	}
