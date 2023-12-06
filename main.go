@@ -54,6 +54,8 @@ func main() {
 		log.Fatalf("Error getting video script: %v\n", err)
 	}
 
+	fmt.Printf("\nScript: %s\n", videoMeta.Script)
+
 	//Initialize our AWS session
 	updateConsole("Initializing AWS Session...")
 	if err := videoMeta.initAwsSession(); err != nil {
@@ -178,5 +180,5 @@ func saveFrames(imageData []openai.ImageResponse) error {
 }
 
 func updateConsole(message string) {
-	fmt.Printf("\r%s", message)
+	fmt.Printf("\r%24s", message)
 }
