@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/polly"
+	"github.com/rs/zerolog/log"
 )
 
 // VideoMeta holds various data necessary to create our video.
@@ -27,6 +29,7 @@ type VideoMeta struct {
 
 // newMetaData returns a new VideoMeta struct with required credentials retrieved from ENV.
 func newMetaData() (*VideoMeta, error) {
+	log.Info().Msg("gather api credentials")
 	authData, err := getCredentials()
 	if err != nil {
 		return nil, err
@@ -43,10 +46,12 @@ func (vm *VideoMeta) CreateVoiceOvers() error {
 	vm.ScriptVoFileLocation = fmt.Sprintf("%s.%s", MAIN_AUDIO_FILE_NAME, "mp3")
 	vm.SignOffVoFileLocation = fmt.Sprintf("%s.%s", END_AUDIO_FILE_NAME, "mp3")
 
+	log.Debug().Msg("generating voiceover a")
 	if err := vm.generateVoiceOver(vm.Script, vm.ScriptVoFileLocation); err != nil {
 		return fmt.Errorf("error when generating script vo: %v", err)
 	}
 
+	log.Debug().Msg("generating voiceover b")
 	if err := vm.generateVoiceOver(vm.SignOff, vm.SignOffVoFileLocation); err != nil {
 		return fmt.Errorf("error when generating signoff vo: %v", err)
 	}
@@ -79,6 +84,7 @@ func (vm *VideoMeta) generateVoiceOver(script, filepath string) error {
 
 	defer outFile.Close()
 
+	log.Debug().Msgf("saving voiceover to file: %v", outFile.Name())
 	_, err = io.Copy(outFile, output.AudioStream)
 	if err != nil {
 		return fmt.Errorf("error saving MP3: %v", err)

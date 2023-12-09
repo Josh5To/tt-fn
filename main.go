@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	openai "github.com/sashabaranov/go-openai"
 	"golang.org/x/sync/errgroup"
 )
@@ -33,57 +34,81 @@ type ImagePrompt struct {
 }
 
 // chatGPT prompt used to generate the json payload for our video. Containing main script and a signoff.
-var scriptPromptFlag *string
+var (
+	debugFlag        *bool
+	scriptPromptFlag *string
+)
 
 func init() {
 	scriptPromptFlag = flag.String("prompt", "",
 		"Use this to pass in a prompt tasking chatGPT with writing a narration script for a video. (Story, Documentary, etc.)")
+	debugFlag = flag.Bool("debug", false, "Set logger to debug level.")
 }
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	flag.Parse()
+
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if *debugFlag {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
 
 	videoMeta, err := newMetaData()
 	if err != nil {
-		log.Fatalf("%v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("%v\n", err)
 	}
 
 	// Get prompt from file, generate our video script and 'signoff' message
-	updateConsole("Getting video script...")
+	log.Info().Msg("Getting video script...")
 	if err := videoMeta.getVideoScript(*scriptPromptFlag); err != nil {
-		log.Fatalf("Error getting video script: %v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("Error getting video script: %v\n", err)
 	}
 
-	fmt.Printf("\nScript: %s\n", videoMeta.Script)
+	log.Info().Msgf("video script completed: %s", videoMeta.Script)
 
 	//Initialize our AWS session
-	updateConsole("Initializing AWS Session...")
+	log.Info().Msg("Initializing AWS Session...")
 	if err := videoMeta.initAwsSession(); err != nil {
-		log.Fatalf("Error initiation aws session: %v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("Error initiation aws session: %v\n", err)
 	}
 
-	updateConsole("Creating voiceovers...")
+	log.Info().Msg("Creating voiceovers...")
 	if err := videoMeta.CreateVoiceOvers(); err != nil {
-		log.Fatalf("Error creating voice overs: %v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("Error creating voice overs: %v\n", err)
 	}
 
-	updateConsole("Getting image prompt...")
+	log.Info().Msg("Getting image prompt...")
 	imagePrompt, err := videoMeta.getImageGenPrompt()
 	if err != nil {
-		log.Fatalf("Error getting image prompt: %v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("Error getting image prompt: %v\n", err)
 	}
 
-	updateConsole("Generating video frames...")
+	log.Info().Msg("Generating video frames...")
 	images, err := generateFrames(videoMeta.Credentials.openAiToken, imagePrompt)
 	if err != nil {
-		log.Fatalf("Error generating frames: %v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("Error generating frames: %v\n", err)
 	}
 
 	if err := saveFrames(images); err != nil {
-		log.Fatalf("%v\n", err)
+		log.Fatal().
+			Err(err).
+			Msgf("%v\n", err)
 	}
 
-	log.Printf("finished operation")
+	log.Info().Msg("finished operation")
 }
 
 func GetScript(apiToken, prompt string) (string, error) {
@@ -135,6 +160,7 @@ func generateFrames(apiToken string, prompts []ImagePrompt) ([]openai.ImageRespo
 				if err != nil {
 					return err
 				}
+				log.Debug().Msgf("imagery created with base64 size: %d", len(resp.Data[0].B64JSON))
 				responses[i] = resp
 				return nil
 			})
@@ -177,8 +203,4 @@ func saveFrames(imageData []openai.ImageResponse) error {
 		}
 	}
 	return nil
-}
-
-func updateConsole(message string) {
-	fmt.Printf("\r%24s", message)
 }

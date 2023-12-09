@@ -5,9 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/png"
+	"net/http"
 	"os"
 
-	"golang.org/x/image/webp"
+	"github.com/rs/zerolog/log"
 )
 
 func base64toPNG(b64Data, filepath string) error {
@@ -16,9 +17,9 @@ func base64toPNG(b64Data, filepath string) error {
 		return fmt.Errorf("err decoding b64: %v", err)
 	}
 
-	// fmt.Printf("Content type: %v\n", http.DetectContentType(decodedB64))
+	log.Debug().Msgf("decoding string of content type: %v", http.DetectContentType(decodedB64))
 
-	im, err := webp.Decode(bytes.NewReader(decodedB64))
+	im, err := png.Decode(bytes.NewReader(decodedB64))
 	if err != nil {
 		return fmt.Errorf("err decoding b64 via png: %v", err)
 	}
